@@ -43,7 +43,7 @@ import re
 import abc
 
 
-_VERSION_STRING_PATTERN = re.compile(r"\b(?P<major>\d+).(?P<minor>\d).(?P<patch>\d)\b")
+_VERSION_STRING_PATTERN = re.compile(r"\b(?P<major>\d+).(?P<minor>\d+).(?P<patch>\d+)\b")
 
 
 class Version(NamedTuple):
