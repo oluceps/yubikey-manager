@@ -33,24 +33,24 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install dist/*.tar.gz
-          ykman --version
-          [[ -z "$(ykman --version | grep -E "not found|missing")" ]]
+          ckman --version
+          [[ -z "$(ckman --version | grep -E "not found|missing")" ]]
           pip uninstall -y yubikey-manager
 
       - name: Install from wheel
         shell: bash
         run: |
           pip install dist/*.whl
-          ykman --version
-          [[ -z "$(ykman --version | grep -E "not found|missing")" ]]
+          ckman --version
+          [[ -z "$(ckman --version | grep -E "not found|missing")" ]]
           pip uninstall -y yubikey-manager
 
       - name: PyInstaller
         shell: bash
         run: |
           poetry run pyinstaller ykman.spec
-          dist/ykman/ykman.exe --version
-          [[ -z "$(dist/ykman/ykman.exe --version | grep -E "not found|missing")" ]]
+          dist/ckman/ckman.exe --version
+          [[ -z "$(dist/ckman/ckman.exe --version | grep -E "not found|missing")" ]]
 
       - name: Copy scripts
         shell: bash
@@ -63,5 +63,5 @@ jobs:
       - name: Upload build
         uses: actions/upload-artifact@v1
         with:
-          name: ykman-builds-windows
+          name: ckman-builds-windows
           path: dist

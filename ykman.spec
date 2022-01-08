@@ -82,7 +82,7 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="ykman",
+    name="ckman",
 )
 
 os.unlink("version_info.txt")

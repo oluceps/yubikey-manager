@@ -46,8 +46,8 @@ jobs:
       - name: PyInstaller
         run: |
           poetry run pyinstaller ykman.spec
-          dist/ykman/ykman --version
-          [[ -z "$(dist/ykman/ykman --version | grep -E "not found|missing")" ]]
+          dist/ckman/ckman --version
+          [[ -z "$(dist/ckman/ckman --version | grep -E "not found|missing")" ]]
 
       - name: Copy scripts
         shell: bash
@@ -60,5 +60,5 @@ jobs:
       - name: Upload build
         uses: actions/upload-artifact@v1
         with:
-          name: ykman-builds-macos
+          name: ckman-builds-macos
           path: dist
