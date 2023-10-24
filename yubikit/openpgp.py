@@ -1015,7 +1015,10 @@ class OpenPgpSession:
 
     def _read_version(self) -> Version:
         logger.debug("Getting version number")
-        bcd = self.protocol.send_apdu(0, INS.GET_VERSION, 0, 0)
+        try:
+            bcd = self.protocol.send_apdu(0, INS.GET_VERSION, 0, 0)
+        except ApduError as e:
+            return Version(*(5, 5, 5)) # Canokey doesn't have a dedicated version of OpenPGP
         return Version(*(_bcd(x) for x in bcd))
 
     @property
@@ -1393,7 +1396,7 @@ class OpenPgpSession:
         try:
             return UIF.parse(self.get_data(key_ref.uif_do))
         except ApduError as e:
-            if e.sw == SW.WRONG_PARAMETERS_P1P2:
+            if e.sw in (SW.WRONG_PARAMETERS_P1P2, SW.REFERENCE_DATA_NOT_FOUND):
                 # Not supported
                 return UIF.OFF
             raise
