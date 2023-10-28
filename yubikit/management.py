@@ -369,10 +369,15 @@ class _ManagementSmartCardBackend(_Backend):
                 # YubiKey Edge incorrectly appends SW twice.
                 select_bytes = select_bytes[:-2]
             select_str = select_bytes.decode()
-            print(f"select_str={select_str}")
             self.version = Version.from_string(select_str)
-            # TODO: old FW
-            # self.version = Version.from_string(self.protocol.send_apdu(0, ADMIN_INS_READ_VERSION, 0, 0).decode())
+            try:
+                # For Canokey
+                self.protocol.select(b"\xF0\x00\x00\x00\x00")
+                self.version = Version.from_string(self.protocol.send_apdu(0, ADMIN_INS_READ_VERSION, 0, 0).decode())
+                self.protocol.select(AID.MANAGEMENT)
+            except Error as e:
+                #print(e)
+                pass
             # For YubiKey NEO, we use the OTP application for further commands
             if self.version[0] == 3:
                 # Workaround to "de-select" on NEO, otherwise it gets stuck.
