@@ -67,6 +67,8 @@ class Version(NamedTuple):
             return cls(
                 int(m.group("major")), int(m.group("minor")), int(m.group("patch"))
             )
+        else:
+            return cls(9, 9, 9)
         raise ValueError("No version found in string")
 
 
