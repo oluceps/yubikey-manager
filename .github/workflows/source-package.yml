@@ -1,19 +1,18 @@
-name: Build a source package
+name: Source package
 
 on: [push, pull_request]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    name: Build source package.
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: 3.7
+          python-version: 3.8
 
       - name: Install dependencies
         run: |
@@ -35,7 +34,7 @@ jobs:
           mv dist/canokey_manager-*.whl artifacts/canokey_manager-$REF.whl
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v1
+        uses: actions/upload-artifact@v4
         with:
           name: canokey-manager-source-package
           path: artifacts
@@ -45,12 +44,12 @@ jobs:
     name: Build sphinx documentation
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: 3.8
+          python-version: 3.12
 
       - name: Install python dependencies
         run: |
@@ -64,7 +63,7 @@ jobs:
         run: poetry run make -C docs/ html
 
       - name: Upload documentation
-        uses: actions/upload-artifact@v1
+        uses: actions/upload-artifact@v4
         with:
           name: yubikey-manager-docs
           path: docs/_build/html

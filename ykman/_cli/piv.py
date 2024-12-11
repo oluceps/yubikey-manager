@@ -52,6 +52,7 @@ from ..piv import (
     get_pivman_protected_data,
     pivman_set_mgm_key,
     pivman_change_pin,
+    pivman_set_pin_attempts,
     derive_management_key,
     generate_random_management_key,
     generate_chuid,
@@ -266,7 +267,7 @@ def set_pin_retries(ctx, management_key, pin, pin_retries, puk_retries, force):
         err=True,
     )
     try:
-        session.set_pin_attempts(pin_retries, puk_retries)
+        pivman_set_pin_attempts(session, pin_retries, puk_retries)
         click.echo("Default PINs are set:")
         click.echo("\tPIN:\t123456")
         click.echo("\tPUK:\t12345678")
@@ -757,6 +758,55 @@ def export(ctx, slot, public_key_output, format, verify, pin):
     logger.info(f"Public key for slot {slot} written to {_fname(public_key_output)}")
 
 
+@keys.command("move")
+@click.pass_context
+@click_management_key_option
+@click_pin_option
+@click.argument("source", callback=click_parse_piv_slot)
+@click.argument("dest", callback=click_parse_piv_slot)
+def move_key(ctx, management_key, pin, source, dest):
+    """
+    Moves a key.
+
+    Moves a key from one PIV slot into another.
+
+    \b
+    SOURCE            PIV slot of the key to move
+    DEST              PIV slot to move the key into
+    """
+    if source == dest:
+        raise CliFail("SOURCE must be different from DEST")
+    session = ctx.obj["session"]
+    _ensure_authenticated(ctx, pin, management_key)
+    try:
+        session.move_key(source, dest)
+    except ApduError as e:
+        if e.sw == SW.INCORRECT_PARAMETERS:
+            raise CliFail("DEST slot is not empty")
+        if e.sw == SW.REFERENCE_DATA_NOT_FOUND:
+            raise CliFail("No key in SOURCE slot")
+        raise
+
+
+@keys.command("delete")
+@click.pass_context
+@click_management_key_option
+@click_pin_option
+@click_slot_argument
+def delete_key(ctx, management_key, pin, slot):
+    """
+    Delete a key.
+
+    Delete a key from a PIV slot on the YubiKey.
+
+    \b
+    SLOT            PIV slot of the key
+    """
+    session = ctx.obj["session"]
+    _ensure_authenticated(ctx, pin, management_key)
+    session.delete_key(slot)
+
+
 @piv.group("certificates")
 def cert():
     """
@@ -939,7 +989,7 @@ def generate_certificate(
     data = public_key.read()
     public_key = serialization.load_pem_public_key(data, default_backend())
 
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     valid_to = now + datetime.timedelta(days=valid_days)
 
     if "=" not in subject:

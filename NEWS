@@ -1,10 +1,26 @@
+* Version 5.3.0 (released 2023-01-30)
+ ** FIDO: Add new CLI commands for PIN management and authenticator config
+    (force-change, set-min-length, toggle-always-uv, enable-ep-attestation).
+ ** PIV: Support new key types on supported devices (RSA 3072/4096, Curve25519).
+ ** PIV: Support for moving and deleting keys on supported devices.
+ ** PIV: Improve handling of legacy "PUK blocked" flag.
+ ** PIV: Improve handling of malformed certificates.
+ ** PIV: Display key information in "piv info" output on supported devices.
+ ** OTP: Fix some commands incorrectly showing errors when used over NFC/CCID.
+ ** Add tab-completion YubiKey serial numbers and NRC readers.
+
+* Version 5.2.1 (released 2023-10-10)
+ ** Add support for Python 3.12.
+ ** OATH: detect and remove corrupted credentials.
+ ** Bugfix: HSMAUTH: Fix order of CLI arguments.
+
 * Version 5.2.0 (released 2023-08-21)
- * PIV: Support for compressed certificates.
- * OpenPGP: Use InvalidPinError for wrong PIN.
- * Add YubiHSM Auth application support.
- * Improved API documentation.
- * Scripting: Add name attribute to device.
- * Bugfix: PIV: don't throw InvalidPasswordError on malformed PEM private key.
+ ** PIV: Support for compressed certificates.
+ ** OpenPGP: Use InvalidPinError for wrong PIN.
+ ** Add YubiHSM Auth application support.
+ ** Improved API documentation.
+ ** Scripting: Add name attribute to device.
+ ** Bugfix: PIV: don't throw InvalidPasswordError on malformed PEM private key.
 
 * Version 5.1.1 (released 2023-04-27)
  ** Bugfix: PIV: string representation of SLOT caused infinite loop on Python <3.11.
@@ -40,7 +56,7 @@
     in certain cases.
  ** OATH: Access Keys ("remembered" passwords) are now stored in the system keyring.
  ** OpenPGP: Commands have been added to manage PINs.
- 
+
 * Version 4.0.9 (released 2022-06-17)
  ** Dependency: Add support for python-fido2 1.x
   ** Fix: Drop stated support for Click 6 as features from 7 are being used.

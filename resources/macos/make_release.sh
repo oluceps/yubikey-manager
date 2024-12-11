@@ -32,8 +32,8 @@ read -p "Press enter to continue..."
 
 # Sign binaries
 codesign -f --timestamp --options runtime --entitlements $SCRIPT_DIR/ckman.entitlements --sign 'Application' $SOURCE_DIR/ckman
-codesign -f --timestamp --options runtime --sign 'Application' $(find $SOURCE_DIR -name "*.dylib" -o -name "*.so")
-codesign -f --timestamp --options runtime --sign 'Application' $SOURCE_DIR/Python
+codesign -f --timestamp --options runtime --sign 'Application' $(find $SOURCE_DIR/_internal -name "*.dylib" -o -name "*.so")
+codesign -f --timestamp --options runtime --sign 'Application' $SOURCE_DIR/_internal/Python
 
 # Build pkg
 sh $SCRIPT_DIR/make_pkg.sh ckman-unsigned.pkg
@@ -47,33 +47,11 @@ rm ckman-unsigned.pkg
 echo "Installer signed, submitting for Notarization..."
 
 # Notarize
-RES=$(xcrun altool -t osx -f "$PKG" --primary-bundle-id org.canokeys.canokey-manager --notarize-app -u $1 -p $2)
-echo ${RES}
-ERRORS=${RES:0:9}
-if [ "$ERRORS" != "No errors" ]; then
-	echo "Error uploading for notarization"
-	exit
-fi
-UUID=${RES#*=}
-STATUS=$(xcrun altool --notarization-info $UUID -u $1 -p $2)
-
-while true
-do
-	if [[ "$STATUS" == *"in progress"* ]]; then
-		echo "Notarization still in progress. Sleep 30s."
-		sleep 30
-		echo "Retrieving status again."
-		STATUS=$(xcrun altool --notarization-info $UUID -u $1 -p $2)
-	else
-		echo "Status changed."
-		break
-	fi
-done
-
+STATUS=$(xcrun notarytool submit "$PKG" --apple-id $1 --team-id LQA3CS5MM7 --password $2 --wait)
 echo "Notarization status: ${STATUS}"
 
-if [[ "$STATUS" == *"success"* ]]; then
-	echo "Notarization successfull. Staple the .pkg"
+if [[ "$STATUS" == *"Accepted"* ]]; then
+	echo "Notarization successful. Staple the .pkg"
 	xcrun stapler staple -v "$PKG"
 
 	echo "# .pkg stapled. Everything should be ready for release!"

@@ -48,8 +48,13 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.constant_time import bytes_eq
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-from cryptography.hazmat.primitives.asymmetric import rsa, ec
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    PublicFormat,
+    PrivateFormat,
+    NoEncryption,
+)
+from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, x25519
 from cryptography.hazmat.primitives.asymmetric.padding import AsymmetricPadding
 from cryptography.hazmat.primitives.asymmetric.utils import Prehashed
 from cryptography.hazmat.backends import default_backend
@@ -84,15 +89,24 @@ def require_version(my_version: Version, *args, **kwargs):
 class KEY_TYPE(IntEnum):
     RSA1024 = 0x06
     RSA2048 = 0x07
+    RSA3072 = 0x05
+    RSA4096 = 0x16
     ECCP256 = 0x11
     ECCP384 = 0x14
+    ED25519 = 0xE0
+    X25519 = 0xE1
+
+    def __str__(self):
+        return self.name
 
     @property
     def algorithm(self):
-        return ALGORITHM.EC if self.name.startswith("ECC") else ALGORITHM.RSA
+        return ALGORITHM.RSA if self.name.startswith("RSA") else ALGORITHM.EC
 
     @property
     def bit_len(self):
+        if self in (KEY_TYPE.ED25519, KEY_TYPE.X25519):
+            return 256
         match = re.search(r"\d+$", self.name)
         if match:
             return int(match.group())
@@ -105,7 +119,6 @@ class KEY_TYPE(IntEnum):
                 return getattr(cls, "RSA%d" % key.key_size)
             except AttributeError:
                 raise ValueError("Unsupported RSA key size: %d" % key.key_size)
-                pass  # Fall through to ValueError
         elif isinstance(key, ec.EllipticCurvePublicKey):
             curve_name = key.curve.name
             if curve_name == "secp256r1":
@@ -113,6 +126,10 @@ class KEY_TYPE(IntEnum):
             elif curve_name == "secp384r1":
                 return cls.ECCP384
             raise ValueError(f"Unsupported EC curve: {curve_name}")
+        elif isinstance(key, ed25519.Ed25519PublicKey):
+            return cls.ED25519
+        elif isinstance(key, x25519.X25519PublicKey):
+            return cls.X25519
         raise ValueError(f"Unsupported key type: {type(key).__name__}")
 
 
@@ -144,8 +161,9 @@ def _parse_management_key(key_type, management_key):
         return algorithms.AES(management_key)
 
 
-# The card management slot is special, we don't include it in SLOT below
+# The following slots are special, we don't include it in SLOT below
 SLOT_CARD_MANAGEMENT = 0x9B
+SLOT_OCC_AUTH = 0x96
 
 
 @unique
@@ -232,6 +250,8 @@ class PIN_POLICY(IntEnum):
     NEVER = 0x1
     ONCE = 0x2
     ALWAYS = 0x3
+    MATCH_ONCE = 0x4
+    MATCH_ALWAYS = 0x5
 
 
 @unique
@@ -250,6 +270,7 @@ DEFAULT_MANAGEMENT_KEY = (
 )
 
 PIN_LEN = 8
+TEMPORARY_PIN_LEN = 16
 
 # Instruction set
 INS_VERIFY = 0x20
@@ -259,6 +280,7 @@ INS_GENERATE_ASYMMETRIC = 0x47
 INS_AUTHENTICATE = 0x87
 INS_GET_DATA = 0xCB
 INS_PUT_DATA = 0xDB
+INS_MOVE_KEY = 0xF6
 INS_GET_METADATA = 0xF7
 INS_ATTEST = 0xF9
 INS_SET_PIN_RETRIES = 0xFA
@@ -289,6 +311,8 @@ TAG_METADATA_ORIGIN = 0x03
 TAG_METADATA_PUBLIC_KEY = 0x04
 TAG_METADATA_IS_DEFAULT = 0x05
 TAG_METADATA_RETRIES = 0x06
+TAG_METADATA_BIO_CONFIGURED = 0x07
+TAG_METADATA_TEMPORARY_PIN = 0x08
 
 ORIGIN_GENERATED = 1
 ORIGIN_IMPORTED = 2
@@ -300,6 +324,7 @@ INDEX_RETRIES_REMAINING = 1
 
 PIN_P2 = 0x80
 PUK_P2 = 0x81
+UV_P2 = 0x96
 
 
 def _pin_bytes(pin):
@@ -346,7 +371,16 @@ class SlotMetadata:
         return _parse_device_public_key(self.key_type, self.public_key_encoded)
 
 
+@dataclass
+class BioMetadata:
+    configured: bool
+    attempts_remaining: int
+    temporary_pin: bool
+
+
 def _pad_message(key_type, message, hash_algorithm, padding):
+    if key_type in (KEY_TYPE.ED25519, KEY_TYPE.X25519):
+        return message
     if key_type.algorithm == ALGORITHM.EC:
         if isinstance(hash_algorithm, Prehashed):
             hashed = message
@@ -413,6 +447,21 @@ def check_key_support(
         if pin_policy == PIN_POLICY.NEVER:
             raise NotSupportedError("PIN_POLICY.NEVER not allowed on YubiKey FIPS")
 
+    # New key types
+    if version < (5, 7, 0) and key_type in (
+        KEY_TYPE.RSA3072,
+        KEY_TYPE.RSA4096,
+        KEY_TYPE.ED25519,
+        KEY_TYPE.X25519,
+    ):
+        raise NotSupportedError(f"{key_type} requires YubiKey 5.7 or later")
+
+    # TODO: Detect Bio capabilities
+    if version < () and pin_policy in (PIN_POLICY.MATCH_ONCE, PIN_POLICY.MATCH_ALWAYS):
+        raise NotSupportedError(
+            "Biometric match PIN policy requires YubiKey 5.6 or later"
+        )
+
 
 def _parse_device_public_key(key_type, encoded):
     data = Tlv.parse_dict(encoded)
@@ -420,6 +469,10 @@ def _parse_device_public_key(key_type, encoded):
         modulus = bytes2int(data[0x81])
         exponent = bytes2int(data[0x82])
         return rsa.RSAPublicNumbers(exponent, modulus).public_key(default_backend())
+    elif key_type == KEY_TYPE.ED25519:
+        return ed25519.Ed25519PublicKey.from_public_bytes(data[0x86])
+    elif key_type == KEY_TYPE.X25519:
+        return x25519.X25519PublicKey.from_public_bytes(data[0x86])
     else:
         if key_type == KEY_TYPE.ECCP256:
             curve: Type[ec.EllipticCurve] = ec.SECP256R1
@@ -452,6 +505,14 @@ class PivSession:
     def reset(self) -> None:
         logger.debug("Preparing PIV reset")
 
+        try:
+            if self.get_bio_metadata().configured:
+                raise ValueError(
+                    "Cannot perform PIV reset when biometrics are configured"
+                )
+        except NotSupportedError:
+            pass
+
         # Block PIN
         logger.debug("Verify PIN with invalid attempts until blocked")
         counter = self.get_pin_attempts()
@@ -464,7 +525,10 @@ class PivSession:
 
         # Block PUK
         logger.debug("Verify PUK with invalid attempts until blocked")
-        counter = 1
+        try:
+            counter = self.get_puk_metadata().attempts_remaining
+        except NotSupportedError:
+            counter = 1
         while counter > 0:
             try:
                 self._change_reference(INS_RESET_RETRY, PIN_P2, "", "")
@@ -566,6 +630,40 @@ class PivSession:
                 raise
             self._current_pin_retries = retries
             raise InvalidPinError(retries)
+
+    def verify_uv(self) -> bytes:
+        logger.debug("Verifying UV")
+        try:
+            return self.protocol.send_apdu(0, INS_VERIFY, 0, SLOT_OCC_AUTH)
+        except ApduError as e:
+            if e.sw == SW.REFERENCE_DATA_NOT_FOUND:
+                raise NotSupportedError(
+                    "Biometric verification not supported by this YuibKey"
+                )
+            retries = _retries_from_sw(e.sw)
+            if retries is None:
+                raise
+            raise InvalidPinError(
+                retries, f"Fingerprint mismatch, {retries} attempts remaining"
+            )
+
+    def verify_temporary_pin(self, pin: bytes) -> None:
+        logger.debug("Verifying temporary PIN")
+        if len(pin) != TEMPORARY_PIN_LEN:
+            raise ValueError(f"Temporary PIN must be exactly {TEMPORARY_PIN_LEN} bytes")
+        try:
+            self.protocol.send_apdu(0, INS_VERIFY, 0, SLOT_OCC_AUTH, Tlv(1, pin))
+        except ApduError as e:
+            if e.sw == SW.REFERENCE_DATA_NOT_FOUND:
+                raise NotSupportedError(
+                    "Biometric verification not supported by this YuibKey"
+                )
+            retries = _retries_from_sw(e.sw)
+            if retries is None:
+                raise
+            raise InvalidPinError(
+                retries, f"Invalid temporary PIN, {retries} attempts remaining"
+            )
 
     def get_pin_attempts(self) -> int:
         """Get remaining PIN attempts."""
@@ -681,6 +779,24 @@ class PivSession:
             data[TAG_METADATA_PUBLIC_KEY],
         )
 
+    def get_bio_metadata(self) -> BioMetadata:
+        logger.debug("Getting bio metadata")
+        try:
+            data = Tlv.parse_dict(
+                self.protocol.send_apdu(0, INS_GET_METADATA, 0, SLOT_OCC_AUTH)
+            )
+        except ApduError as e:
+            if e.sw in (SW.REFERENCE_DATA_NOT_FOUND, SW.INVALID_INSTRUCTION):
+                raise NotSupportedError(
+                    "Biometric verification not supported by this YuibKey"
+                )
+            raise
+        return BioMetadata(
+            1 == data.get(TAG_METADATA_BIO_CONFIGURED, b"\x00")[0],
+            data[TAG_METADATA_RETRIES][0],
+            1 == data.get(TAG_METADATA_TEMPORARY_PIN, b"\x00")[0],
+        )
+
     def sign(
         self,
         slot: SLOT,
@@ -720,11 +836,9 @@ class PivSession:
         :param padding: The padding of the plain text.
         """
         slot = SLOT(slot)
-        if len(cipher_text) == 1024 // 8:
-            key_type = KEY_TYPE.RSA1024
-        elif len(cipher_text) == 2048 // 8:
-            key_type = KEY_TYPE.RSA2048
-        else:
+        try:
+            key_type = getattr(KEY_TYPE, f"RSA{len(cipher_text) * 8}")
+        except AttributeError:
             raise ValueError("Invalid length of ciphertext")
         logger.debug(
             f"Decrypting data with key in slot {slot} of type {key_type} using ",
@@ -734,7 +848,11 @@ class PivSession:
         return _unpad_message(padded, padding)
 
     def calculate_secret(
-        self, slot: SLOT, peer_public_key: ec.EllipticCurvePublicKey
+        self,
+        slot: SLOT,
+        peer_public_key: Union[
+            ec.EllipticCurvePrivateKeyWithSerialization, x25519.X25519PublicKey
+        ],
     ) -> bytes:
         """Calculate shared secret using ECDH.
 
@@ -750,15 +868,18 @@ class PivSession:
         logger.debug(
             f"Performing key agreement with key in slot {slot} of type {key_type}"
         )
-        data = peer_public_key.public_bytes(
-            Encoding.X962, PublicFormat.UncompressedPoint
-        )
+        if key_type == KEY_TYPE.X25519:
+            data = peer_public_key.public_bytes(Encoding.Raw, PublicFormat.Raw)
+        else:
+            data = peer_public_key.public_bytes(
+                Encoding.X962, PublicFormat.UncompressedPoint
+            )
         return self._use_private_key(slot, key_type, data, True)
 
     def get_object(self, object_id: int) -> bytes:
         """Get object by ID.
 
-        Requires PIN verification.
+        Requires PIN verification for protected objects.
 
         :param object_id: The object identifier.
         """
@@ -808,11 +929,11 @@ class PivSession:
         logger.debug(f"Reading certificate in slot {slot}")
         try:
             data = Tlv.parse_dict(self.get_object(OBJECT_ID.from_slot(slot)))
-        except ValueError:
+            cert_data = data[TAG_CERTIFICATE]
+            cert_info = data[TAG_CERT_INFO][0] if TAG_CERT_INFO in data else 0
+        except (ValueError, KeyError):
             raise BadResponseError("Malformed certificate data object")
 
-        cert_data = data[TAG_CERTIFICATE]
-        cert_info = data[TAG_CERT_INFO][0] if TAG_CERT_INFO in data else 0
         if cert_info == 1:
             logger.debug("Certificate is compressed, decompressing...")
             # Compressed certificate
@@ -888,8 +1009,8 @@ class PivSession:
         key_type = KEY_TYPE.from_public_key(private_key.public_key())
         check_key_support(self.version, key_type, pin_policy, touch_policy, False)
         ln = key_type.bit_len // 8
-        numbers = private_key.private_numbers()
         if key_type.algorithm == ALGORITHM.RSA:
+            numbers = private_key.private_numbers()
             numbers = cast(rsa.RSAPrivateNumbers, numbers)
             if numbers.public_numbers.e != 65537:
                 raise NotSupportedError("RSA exponent must be 65537")
@@ -901,7 +1022,15 @@ class PivSession:
                 + Tlv(0x04, int2bytes(numbers.dmq1, ln))
                 + Tlv(0x05, int2bytes(numbers.iqmp, ln))
             )
+        elif key_type in (KEY_TYPE.ED25519, KEY_TYPE.X25519):
+            data = Tlv(
+                0x07 if key_type == KEY_TYPE.ED25519 else 0x08,
+                private_key.private_bytes(
+                    Encoding.Raw, PrivateFormat.Raw, NoEncryption()
+                ),
+            )
         else:
+            numbers = private_key.private_numbers()
             numbers = cast(ec.EllipticCurvePrivateNumbers, numbers)
             data = Tlv(0x06, int2bytes(numbers.private_value, ln))
         if pin_policy:
@@ -961,6 +1090,34 @@ class PivSession:
         response = self.protocol.send_apdu(0, INS_ATTEST, slot, 0)
         logger.debug(f"Attested key in slot {slot}")
         return x509.load_der_x509_certificate(response, default_backend())
+
+    def move_key(self, from_slot: SLOT, to_slot: SLOT) -> None:
+        """Move key from one slot to another.
+
+        Requires authentication with management key.
+
+        :param from_slot: The slot containing the key to move.
+        :param to_slot: The new slot to move the key to.
+        """
+        require_version(self.version, (5, 7, 0))
+        from_slot = SLOT(from_slot)
+        to_slot = SLOT(to_slot)
+        logger.debug(f"Moving key from slot {from_slot} to {to_slot}")
+        self.protocol.send_apdu(0, INS_MOVE_KEY, to_slot, from_slot)
+        logger.info(f"Key moved from slot {from_slot} to {to_slot}")
+
+    def delete_key(self, slot: SLOT) -> None:
+        """Delete a key in a slot.
+
+        Requires authentication with management key.
+
+        :param slot: The slot containing the key to delete.
+        """
+        require_version(self.version, (5, 7, 0))
+        slot = SLOT(slot)
+        logger.debug(f"Deleting key in slot {slot}")
+        self.protocol.send_apdu(0, INS_MOVE_KEY, 0xFF, slot)
+        logger.info(f"Key deleted in slot {slot}")
 
     def _change_reference(self, ins, p2, value1, value2):
         try:

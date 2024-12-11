@@ -75,14 +75,19 @@ class CAPABILITY(IntFlag):
         return f"{name}: {hex(self)}"
 
     @property
-    def display_name(self):
-        if self == CAPABILITY.U2F:
+    def display_name(self) -> str:
+        if self == CAPABILITY.OTP:
+            return "Yubico OTP"
+        elif self == CAPABILITY.U2F:
             return "FIDO U2F"
         elif self == CAPABILITY.OPENPGP:
             return "OpenPGP"
         elif self == CAPABILITY.HSMAUTH:
             return "YubiHSM Auth"
-        return self.name or ", ".join(c.display_name for c in CAPABILITY if c in self)
+        # mypy bug?
+        return self.name or ", ".join(
+            c.display_name for c in CAPABILITY if c in self  # type: ignore
+        )
 
     @property
     def usb_interfaces(self) -> USB_INTERFACE:
@@ -354,9 +359,10 @@ class _ManagementOtpBackend(_Backend):
 
 ADMIN_INS_READ_VERSION = 0x31
 
+INS_SET_MODE = 0x16
 INS_READ_CONFIG = 0x1D
 INS_WRITE_CONFIG = 0x1C
-INS_SET_MODE = 0x16
+INS_DEVICE_RESET = 0x1F
 P1_DEVICE_CONFIG = 0x11
 
 
@@ -405,6 +411,9 @@ class _ManagementSmartCardBackend(_Backend):
 
     def write_config(self, config):
         self.protocol.send_apdu(0, INS_WRITE_CONFIG, 0, 0, config)
+
+    def device_reset(self):
+        self.protocol.send_apdu(0, INS_DEVICE_RESET, 0, 0)
 
 
 CTAP_VENDOR_FIRST = 0x40
@@ -475,7 +484,7 @@ class ManagementSession:
     ) -> None:
         """Write configuration settings for YubiKey.
 
-        :pararm config: The device configuration.
+        :param config: The device configuration.
         :param reboot: If True the YubiKey will reboot.
         :param cur_lock_code: Current lock code.
         :param new_lock_code: New lock code.
@@ -545,3 +554,10 @@ class ManagementSession:
                 struct.pack("<BBH", code, chalresp_timeout, auto_eject_timeout or 0)
             )
             logger.info("Mode configuration written")
+
+    def device_reset(self) -> None:
+        if not isinstance(self.backend, _ManagementSmartCardBackend):
+            raise NotSupportedError("Device reset can only be performed over CCID")
+        logger.debug("Performing device reset")
+        self.backend.device_reset()
+        logger.info("Device reset performed")

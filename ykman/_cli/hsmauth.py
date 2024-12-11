@@ -103,7 +103,7 @@ def _parse_key(key, key_len, key_type):
     if len(key) != key_len:
         raise ValueError(
             f"{key_type} must be exactly {key_len} bytes long "
-            f"({key_len*2} hexadecimal digits) long"
+            f"({key_len * 2} hexadecimal digits) long"
         )
     return key
 
@@ -529,7 +529,7 @@ def derive(ctx, label, derivation_password, credential_password, management_key,
 
     try:
         session.put_credential_derived(
-            management_key, label, credential_password, derivation_password, touch
+            management_key, label, derivation_password, credential_password, touch
         )
     except Exception as e:
         handle_credential_error(

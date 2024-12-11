@@ -14,15 +14,15 @@ jobs:
       ARCHFLAGS: -arch x86_64 -arch arm64
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Install Poetry
         run: pipx install poetry
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11.4'
+          python-version: '3.12.1'
           cache: poetry
 
       - name: Install dependencies
@@ -58,7 +58,7 @@ jobs:
         run: ./scripts/make_pkg.sh
 
       - name: Upload build
-        uses: actions/upload-artifact@v1
+        uses: actions/upload-artifact@v4
         with:
           name: ckman-builds-macos
           path: dist

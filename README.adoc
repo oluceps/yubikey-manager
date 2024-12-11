@@ -1,5 +1,8 @@
 == YubiKey Manager CLI
-image:https://github.com/Yubico/yubikey-manager/workflows/build/badge.svg["Build Status", link="https://github.com/Yubico/yubikey-manager/actions"]
+image:https://github.com/Yubico/yubikey-manager/actions/workflows/source-package.yml/badge.svg["Source package build", link="https://github.com/Yubico/yubikey-manager/actions/workflows/source-package.yml"]
+image:https://github.com/Yubico/yubikey-manager/actions/workflows/windows.yml/badge.svg["Windows build", link="https://github.com/Yubico/yubikey-manager/actions/workflows/windows.yml"]
+image:https://github.com/Yubico/yubikey-manager/actions/workflows/macOS.yml/badge.svg["MacOS build", link="https://github.com/Yubico/yubikey-manager/actions/workflows/macOS.yml"]
+image:https://github.com/Yubico/yubikey-manager/actions/workflows/ubuntu.yml/badge.svg["Ubuntu build", link="https://github.com/Yubico/yubikey-manager/actions/workflows/ubuntu.yml"]
 
 Python 3.7 (or later) library and command line tool for configuring a YubiKey.
 If you're looking for the graphical application, it's https://developers.yubico.com/yubikey-manager-qt/[here].
@@ -73,7 +76,7 @@ Some of the libraries used by yubikey-manager have C-extensions, and may require
 additional dependencies to build, such as http://www.swig.org/[swig] and
 potentially https://pcsclite.apdu.fr/[PCSC lite].
 
-=== Pre-build packages
+=== Pre-built packages
 Pre-built packages specific to your platform may be available from Yubico or
 third parties. Please refer to your platforms native package manager for
 detailed instructions on how to install, if available.
@@ -112,7 +115,7 @@ Yubico also provides packages for Ubuntu in the yubico/stable PPA:
   $ sudo apt install yubikey-manager
 
 ==== FreeBSD
-Althought not being officially supported on this platform, YubiKey Manager can be
+Although not being officially supported on this platform, YubiKey Manager can be
 installed on FreeBSD. It's available via its ports tree or as pre-built package.
 Should you opt to install and use YubiKey Manager on this platform, please be aware
 that it's **NOT** maintained by Yubico.

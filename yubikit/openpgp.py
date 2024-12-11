@@ -696,7 +696,7 @@ class Kdf(abc.ABC):
     algorithm: ClassVar[int]
 
     @abc.abstractmethod
-    def process(self, pin: str, pw: PW) -> bytes:
+    def process(self, pw: PW, pin: str) -> bytes:
         """Run the KDF on the input PIN."""
 
     @classmethod
@@ -896,7 +896,7 @@ def _get_key_attributes(
         return RsaAttributes.create(
             RSA_SIZE(private_key.key_size),
             RSA_IMPORT_FORMAT.CRT_W_MOD
-            if version < (4, 0, 0)
+            if 0 < version[0] < 4
             else RSA_IMPORT_FORMAT.STANDARD,
         )
     return EcAttributes.create(key_ref, OID._from_key(private_key))
@@ -1005,7 +1005,7 @@ class OpenPgpSession:
         self._version = self._read_version()
 
         self.protocol.enable_touch_workaround(self.version)
-        if self.version >= (4, 0, 0):
+        if not 0 < self.version[0] < 4:
             self.protocol.apdu_format = ApduFormat.EXTENDED
 
         # Note: This value is cached!
@@ -1150,11 +1150,14 @@ class OpenPgpSession:
         )
         logger.info("Number of PIN attempts has been changed")
 
-    def get_kdf(self):
+    def get_kdf(self) -> Kdf:
         """Get the Key Derivation Function data object."""
         if EXTENDED_CAPABILITY_FLAGS.KDF not in self.extended_capabilities.flags:
-            return KdfNone()
-        return Kdf.parse(self.get_data(DO.KDF))
+            kdf: Kdf = KdfNone()
+        else:
+            kdf = Kdf.parse(self.get_data(DO.KDF))
+        logger.debug(f"Using KDF: {type(kdf).__name__}")
+        return kdf
 
     def set_kdf(self, kdf: Kdf) -> None:
         """Set up a PIN Key Derivation Function.
@@ -1176,14 +1179,27 @@ class OpenPgpSession:
         self.put_data(DO.KDF, kdf)
         logger.info("KDF settings changed")
 
+    def _process_pin(self, kdf: Kdf, pw: PW, pin: str) -> bytes:
+        pin_bytes = kdf.process(pw, pin)
+        pin_len = len(pin_bytes)
+        min_len = 6 if pw is PW.USER else 8
+        max_len = self._app_data.discretionary.pw_status.get_max_len(pw)
+        if not (min_len <= pin_len <= max_len):
+            raise ValueError(
+                f"{pw.name} PIN length must be in the range {min_len}-{max_len}"
+            )
+        return pin_bytes
+
     def _verify(self, pw: PW, pin: str, mode: int = 0) -> None:
-        pin_enc = self.get_kdf().process(pw, pin)
+        pin_enc = self._process_pin(self.get_kdf(), pw, pin)
         try:
             self.protocol.send_apdu(0, INS.VERIFY, 0, pw + mode, pin_enc)
         except ApduError as e:
             if e.sw == SW.SECURITY_CONDITION_NOT_SATISFIED:
                 attempts = self.get_pin_status().get_attempts(pw)
                 raise InvalidPinError(attempts)
+            if e.sw == SW.AUTH_METHOD_BLOCKED:
+                raise InvalidPinError(0, f"{pw.name} PIN blocked")
             raise e
 
     def verify_pin(self, pin, extended: bool = False):
@@ -1228,12 +1244,14 @@ class OpenPgpSession:
                 INS.CHANGE_PIN,
                 0,
                 pw,
-                kdf.process(pw, pin) + kdf.process(pw, new_pin),
+                self._process_pin(kdf, pw, pin) + self._process_pin(kdf, pw, new_pin),
             )
         except ApduError as e:
             if e.sw == SW.SECURITY_CONDITION_NOT_SATISFIED:
                 attempts = self.get_pin_status().get_attempts(pw)
                 raise InvalidPinError(attempts)
+            if e.sw == SW.AUTH_METHOD_BLOCKED:
+                raise InvalidPinError(0, f"{pw.name} PIN blocked")
             raise e
 
         logger.info(f"New {pw.name} PIN set")
@@ -1265,7 +1283,7 @@ class OpenPgpSession:
         :param reset_code: The Reset Code for User PIN.
         """
         logger.debug("Setting a new PIN Reset Code")
-        data = self.get_kdf().process(PW.RESET, reset_code)
+        data = self._process_pin(self.get_kdf(), PW.RESET, reset_code)
         self.put_data(DO.RESETTING_CODE, data)
         logger.info("New Reset Code has been set")
 
@@ -1278,22 +1296,26 @@ class OpenPgpSession:
         :param reset_code: The Reset Code.
         """
         logger.debug("Resetting User PIN")
-        p1 = 2
         kdf = self.get_kdf()
-        data = kdf.process(PW.USER, new_pin)
+        data = self._process_pin(kdf, PW.USER, new_pin)
         if reset_code:
             logger.debug("Using Reset Code")
-            data = kdf.process(PW.RESET, reset_code) + data
+            data = self._process_pin(kdf, PW.RESET, reset_code) + data
             p1 = 0
+        else:
+            p1 = 2
 
         try:
             self.protocol.send_apdu(0, INS.RESET_RETRY_COUNTER, p1, PW.USER, data)
         except ApduError as e:
-            if e.sw == SW.SECURITY_CONDITION_NOT_SATISFIED and not reset_code:
-                attempts = self.get_pin_status().attempts_reset
-                raise InvalidPinError(
-                    attempts, f"Invalid Reset Code, {attempts} remaining"
-                )
+            if reset_code:
+                if e.sw == SW.SECURITY_CONDITION_NOT_SATISFIED:
+                    attempts = self.get_pin_status().attempts_reset
+                    raise InvalidPinError(
+                        attempts, f"Invalid Reset Code, {attempts} remaining"
+                    )
+                if e.sw in (SW.AUTH_METHOD_BLOCKED, SW.INCORRECT_PARAMETERS):
+                    raise InvalidPinError(0, "Reset Code blocked")
             raise e
         logger.info("New User PIN has been set")
 
@@ -1320,9 +1342,9 @@ class OpenPgpSession:
         ):
             raise NotSupportedError("Writing Algorithm Attributes is not supported")
 
-        if self.version < (5, 2, 0):
+        if self.version < (5, 2, 0) and self.version[0] > 0:
             sizes = [RSA_SIZE.RSA2048]
-            if self.version < (4, 0, 0):  # Neo needs CRT
+            if 0 < self.version[0] < 4:  # Neo needs CRT
                 fmt = RSA_IMPORT_FORMAT.CRT_W_MOD
             else:
                 fmt = RSA_IMPORT_FORMAT.STANDARD
@@ -1348,7 +1370,7 @@ class OpenPgpSession:
                 AlgorithmAttributes.parse(tlv.value)
             )
 
-        if self.version < (5, 6, 1):
+        if self.version < (5, 6, 1) and self.version[0] > 0:
             # Fix for invalid Curve25519 entries:
             # Remove X25519 with EdDSA from all keys
             invalid_x25519 = EcAttributes(0x16, OID.X25519, EC_IMPORT_FORMAT.STANDARD)
@@ -1378,12 +1400,13 @@ class OpenPgpSession:
         :param key_ref: The key slot.
         :param attributes: The algorithm attributes to set.
         """
-        logger.debug("Setting Algorithm Attributes for {key_ref.name}")
+        logger.debug(f"Setting Algorithm Attributes for {key_ref.name}")
         supported = self.get_algorithm_information()
-        if key_ref not in supported:
-            raise NotSupportedError("Key slot not supported")
-        if attributes not in supported[key_ref]:
-            raise NotSupportedError("Algorithm attributes not supported")
+        if self.version[0] > 0:  # Don't check support on major version 0
+            if key_ref not in supported:
+                raise NotSupportedError("Key slot not supported")
+            if attributes not in supported[key_ref]:
+                raise NotSupportedError("Algorithm attributes not supported")
 
         self.put_data(key_ref.algorithm_attributes_do, attributes)
         logger.info("Algorithm Attributes have been changed")
@@ -1557,7 +1580,7 @@ class OpenPgpSession:
             ):
                 raise NotSupportedError("This YubiKey only supports RSA 2048 keys")
 
-        template = _get_key_template(private_key, key_ref, self.version < (4, 0, 0))
+        template = _get_key_template(private_key, key_ref, 0 < self.version[0] < 4)
         self.protocol.send_apdu(0, INS.PUT_DATA_ODD, 0x3F, 0xFF, bytes(template))
         logger.info(f"Private key imported for {key_ref.name}")
 
@@ -1568,7 +1591,7 @@ class OpenPgpSession:
 
         :param key_ref: The key slot.
         """
-        if self.version < (4, 0, 0):
+        if 0 < self.version[0] < 4:
             # Import over the key
             self.put_key(
                 key_ref, rsa.generate_private_key(65537, 2048, default_backend())
@@ -1655,7 +1678,7 @@ class OpenPgpSession:
     def attest_key(self, key_ref: KEY_REF) -> x509.Certificate:
         """Create an attestation certificate for a key.
 
-        The certificte is written to the certificate slot for the key, and its
+        The certificate is written to the certificate slot for the key, and its
         content is returned.
 
         Requires User PIN verification.
