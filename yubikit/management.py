@@ -141,6 +141,13 @@ class FORM_FACTOR(IntEnum):
         code &= 0xF
         return cls(code) if code in cls.__members__.values() else cls.UNKNOWN
 
+    @classmethod
+    def from_str(cls, name: str) -> "FORM_FACTOR":
+        if name.endswith("Canary"):
+            return cls.USB_C_KEYCHAIN
+        elif name.endswith("Pigeon"):
+            return cls.USB_A_KEYCHAIN
+        return cls.UNKNOWN
 
 @unique
 class DEVICE_FLAG(IntFlag):
@@ -310,6 +317,7 @@ SLOT_YK4_SET_DEVICE_INFO = 0x15
 
 class _Backend(abc.ABC):
     version: Version
+    is_cano = False
 
     @abc.abstractmethod
     def close(self) -> None:
@@ -357,7 +365,10 @@ class _ManagementOtpBackend(_Backend):
     def write_config(self, config):
         self.protocol.send_and_receive(SLOT_YK4_SET_DEVICE_INFO, config)
 
+ADMIN_INS_NFC_ENABLE = 0x14
 ADMIN_INS_READ_VERSION = 0x31
+ADMIN_INS_READ_SERIAL = 0x32
+ADMIN_INS_READ_CONFIG = 0x40
 
 INS_SET_MODE = 0x16
 INS_READ_CONFIG = 0x1D
@@ -379,8 +390,12 @@ class _ManagementSmartCardBackend(_Backend):
             try:
                 # For Canokey
                 self.protocol.select(b"\xF0\x00\x00\x00\x00")
-                self.version = Version.from_string(self.protocol.send_apdu(0, ADMIN_INS_READ_VERSION, 0, 0).decode())
-                self.protocol.select(AID.MANAGEMENT)
+                select_bytes, _ = self.protocol.connection.send_and_receive(b"\x00\x31\x00\x00\x20")
+                select_str = select_bytes.decode()
+                self.version = Version.from_string(select_str)
+                self.is_cano = True
+                logger.debug(f"select_str={select_str} self.version={self.version}")
+                return
             except Error as e:
                 #print(e)
                 pass
@@ -411,6 +426,18 @@ class _ManagementSmartCardBackend(_Backend):
 
     def write_config(self, config):
         self.protocol.send_apdu(0, INS_WRITE_CONFIG, 0, 0, config)
+
+    def read_serial(self):
+        sn, _ = self.protocol.connection.send_and_receive(b"\x00\x32\x00\x00\x04")
+        return bytes2int(sn)
+
+    def read_product_string(self):
+        sn, _ = self.protocol.connection.send_and_receive(b"\x00\x31\x01\x00\x20")
+        return sn.decode()
+
+    def read_nfc_enable(self):
+        st, _ = self.protocol.connection.send_and_receive(b"\x00\x14\x00\x00\x01")
+        return bytes2int(st)
 
     def device_reset(self):
         self.protocol.send_apdu(0, INS_DEVICE_RESET, 0, 0)
@@ -470,8 +497,34 @@ class ManagementSession:
     def version(self) -> Version:
         return self.backend.version
 
+    def build_device_info(self):
+        capabilities = CAPABILITY.U2F | CAPABILITY.FIDO2 | CAPABILITY.PIV | CAPABILITY.OPENPGP | CAPABILITY.OATH
+        name = self.backend.read_product_string()
+        info = DeviceInfo(
+            config=DeviceConfig(
+                enabled_capabilities={
+                    TRANSPORT.USB: capabilities,
+                    TRANSPORT.NFC: capabilities,
+                },
+                auto_eject_timeout=0,
+                challenge_response_timeout=0,
+                device_flags=DEVICE_FLAG(0),
+            ),
+            serial=self.backend.read_serial(),
+            version=self.version,
+            form_factor=FORM_FACTOR.from_str(name),
+            supported_capabilities={
+                TRANSPORT.USB: capabilities,
+                TRANSPORT.NFC: capabilities,
+            },
+            is_locked=False,
+        )
+        return info
+
     def read_device_info(self) -> DeviceInfo:
         """Get detailed information about the YubiKey."""
+        if self.backend.is_cano:
+            return self.build_device_info()
         require_version(self.version, (4, 1, 0))
         return DeviceInfo.parse(self.backend.read_config(), self.version)
 
