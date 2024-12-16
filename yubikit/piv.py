@@ -47,6 +47,7 @@ from .core.smartcard import (
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES
 from cryptography.hazmat.primitives.constant_time import bytes_eq
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
@@ -156,7 +157,7 @@ class MANAGEMENT_KEY_TYPE(IntEnum):
 
 def _parse_management_key(key_type, management_key):
     if key_type == MANAGEMENT_KEY_TYPE.TDES:
-        return algorithms.TripleDES(management_key)
+        return TripleDES(management_key)
     else:
         return algorithms.AES(management_key)
 
