@@ -34,7 +34,11 @@ from yubikit.logging import LOG_LEVEL
 from smartcard import System
 from smartcard.Exceptions import CardConnectionException
 from smartcard.pcsc.PCSCExceptions import ListReadersException
-from smartcard.pcsc.PCSCContext import PCSCContext
+
+try:
+    from smartcard.pcsc.PCSCContext import PCSCContext
+except ImportError:
+    PCSCContext = None
 
 from fido2.pcsc import CtapPcscDevice
 from time import sleep
@@ -175,7 +179,8 @@ def list_readers():
         # If the PCSC system has restarted the context might be stale, try
         # forcing a new context (This happens on Windows if the last reader is
         # removed):
-        PCSCContext.instance = None
+        if PCSCContext is not None:
+            PCSCContext.instance = None
         return System.readers()
 
 
