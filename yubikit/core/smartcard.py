@@ -90,6 +90,7 @@ class SW(IntEnum):
     FUNCTION_NOT_SUPPORTED = 0x6A81
     FILE_NOT_FOUND = 0x6A82
     NO_SPACE = 0x6A84
+    INCORRECT_P1P2 = 0x6A86
     REFERENCE_DATA_NOT_FOUND = 0x6A88
     APPLET_SELECT_FAILED = 0x6999
     WRONG_PARAMETERS_P1P2 = 0x6B00
@@ -221,9 +222,13 @@ class SmartCardProtocol:
 
         # Read chained response
         buf = b""
-        while sw >> 8 == SW1_HAS_MORE_DATA:
+        while sw >> 8 == SW1_HAS_MORE_DATA or \
+            (self._ins_send_remaining == 0xA5 and sw == SW.OK): # workaround for OATH
             buf += response
-            response, sw = self.connection.send_and_receive(get_data)
+            response, sw_n = self.connection.send_and_receive(get_data)
+            if sw_n == SW.CONDITIONS_NOT_SATISFIED:
+                break
+            sw = sw_n
 
         if sw != SW.OK:
             raise ApduError(response, sw)

@@ -407,7 +407,7 @@ def _list_keys(session: PivSession) -> Mapping[SLOT, SlotMetadata]:
             keys[slot] = session.get_slot_metadata(slot)
         except ApduError as e:
             if e.sw != SW.REFERENCE_DATA_NOT_FOUND:
-                raise
+                raise NotSupportedError
     return keys
 
 
@@ -453,7 +453,7 @@ def check_key(
         return True
 
     except ApduError as e:
-        if e.sw in (SW.INCORRECT_PARAMETERS, SW.WRONG_PARAMETERS_P1P2):
+        if e.sw in (SW.INCORRECT_PARAMETERS, SW.WRONG_PARAMETERS_P1P2, SW.INCORRECT_P1P2):
             logger.debug(f"Couldn't create signature: SW={e.sw:04x}")
             return False
         raise

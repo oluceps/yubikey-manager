@@ -444,9 +444,11 @@ def check_key_support(
     # FIPS
     if (4, 4, 0) <= version < (4, 5, 0):
         if key_type == KEY_TYPE.RSA1024:
-            raise NotSupportedError("RSA 1024 not supported on YubiKey FIPS")
+            raise NotSupportedError("RSA 1024 not supported on YubiKey FIPS (4 Series)")
         if pin_policy == PIN_POLICY.NEVER:
-            raise NotSupportedError("PIN_POLICY.NEVER not allowed on YubiKey FIPS")
+            raise NotSupportedError(
+                "PIN_POLICY.NEVER not allowed on YubiKey FIPS (4 Series)"
+            )
 
     # New key types
     if version < (5, 7, 0) and key_type in (
@@ -794,7 +796,7 @@ class PivSession:
             raise
         return BioMetadata(
             1 == data.get(TAG_METADATA_BIO_CONFIGURED, b"\x00")[0],
-            data[TAG_METADATA_RETRIES][0],
+            data.get(TAG_METADATA_RETRIES, b'\x00')[0],
             1 == data.get(TAG_METADATA_TEMPORARY_PIN, b"\x00")[0],
         )
 
@@ -1159,9 +1161,11 @@ class PivSession:
                     TAG_DYN_AUTH,
                     Tlv(TAG_AUTH_RESPONSE)
                     + Tlv(
-                        TAG_AUTH_EXPONENTIATION
-                        if exponentiation
-                        else TAG_AUTH_CHALLENGE,
+                        (
+                            TAG_AUTH_EXPONENTIATION
+                            if exponentiation
+                            else TAG_AUTH_CHALLENGE
+                        ),
                         message,
                     ),
                 ),
